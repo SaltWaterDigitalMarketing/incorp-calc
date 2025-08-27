@@ -1,0 +1,15 @@
+:root { --bg:#0b1020; --card:#121a33; --muted:#9fb0d0; --text:#eaf2ff; }
+* { box-sizing: border-box; }
+body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background: var(--bg); color: var(--text); }
+.container { max-width: 980px; margin: 32px auto; padding: 0 16px; }
+.card { background: var(--card); border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+.grid { display: grid; gap: 16px; grid-template-columns: 1fr; }
+@media (min-width: 900px){ .grid { grid-template-columns: 360px 1fr; } }
+label { font-size: 14px; color: var(--muted); }
+input[type="number"] { width: 100%; font-size: 18px; padding: 10px 12px; border-radius: 10px; border: 1px solid #2a355b; background: #0f1630; color: var(--text); outline: none; }
+.table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.table th, .table td { padding: 10px 8px; border-bottom: 1px solid #2a355b; text-align: right; }
+.table th:first-child, .table td:first-child { text-align: left; }
+.hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.badge { display:inline-block; background:#243157; color:#9fb0d0; padding:4px 8px; border-radius: 999px; font-size:12px; }
+h1 { margin: 0 0 12px; font-weight: 700; }
