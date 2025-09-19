@@ -1,11 +1,20 @@
 // CPP (2025 per your spec)
 export const CPP = {
-  YMPE: 68_500,
   BASIC_EXEMPT: 3_500,
-  MPE: 65_000,           // YMPE - BASIC_EXEMPT
-  YAMPE: 73_200,         // upper bound for CPP2
-  RATE_T1: 0.119,        // 11.90% total (self-employed)
-  RATE_T2: 0.04          // 4% total (self-employed)
+
+  // 2025 ceilings
+  YMPE: 71_300,     // Tier 1 ceiling
+  YAMPE: 76_400,    // Tier 2 ceiling
+
+  // Derived (Tier 1 pensionable base)
+  MPE: 71_300 - 3_500, // = 67,800
+
+  // 2025 rates:
+  // NOTE: For unincorporated (self-employed) we need total (EE + ER).
+  // Tier 1 total = 5.95% + 5.95% = 11.90%
+  // Tier 2 total = 4.00% + 4.00% = 8.00%
+  RATE_T1: 0.119,  // 11.90% (combined)
+  RATE_T2: 0.08,   // 8.00% (combined)
 } as const;
 
 // Federal brackets (taxable income)
