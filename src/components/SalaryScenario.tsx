@@ -25,6 +25,7 @@ const CPP_YMPE = 71_300;   // Tier 1 ceiling (2025)
 const CPP_YAMPE = 76_400;  // Tier 2 ceiling (2025)
 const CPP_RATE_T1 = 0.0595; // 5.95% per side (unchanged)
 const CPP_RATE_T2 = 0.04;   // 4.00% per side in 2025  ← was 0.02
+const CPP_BASIC_EXEMPTION = 3_500;
 
 // Federal brackets (2025)
 const FED_BRACKETS_2025: Array<[number, number]> = [
