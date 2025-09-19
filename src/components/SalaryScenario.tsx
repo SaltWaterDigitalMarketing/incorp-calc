@@ -1,30 +1,32 @@
 import React, { useMemo, useState } from "react";
+import { computeCorporateTaxesBC } from "../engine/corporateTax_BC";
 
 /**
  * SalaryScenario.tsx
- * Incorporated with Salary — BC 2025
- * - CPP excluded from taxes (but reduces net; shown separately)
- * - Supports retained earnings (BusinessIncome can exceed amounts needed to fund personal cash goal)
- * - 2025 Federal + BC tax brackets
- * - Applies Basic Personal Amount (BPA) credits (federal + BC)
- * - Binary search solver to back into Gross Salary for a target Personal Cash Needed
+ * Incorporated with Salary — BC 2025 (CRA-correct CPP)
  *
- * Returns keys aligned with your ScenarioOutput from calculateUnincorporated:
- * {
- *   scenario, grossSalary, eligibleDividends, nonEligibleDividends,
- *   corporateTaxes, corporateCPP, personalTaxes, totalTaxes, totalCPP, personalCPP,
- *   corporateCash, personalCash, totalCash, totalTaxRate, rrspRoom,
- *   federalTax, provincialTax, taxableIncome
- * }
+ * - Applies CPP correctly:
+ *   * PERSONAL: deduct EE T1 enhanced (1%) + EE CPP2 (4%) from taxable income; credit EE T1 base (4.95%) at lowest fed/prov rates
+ *   * CORPORATE: deduct ER T1 base (4.95%) + ER T1 enhanced (1%) + ER CPP2 (4%) from corp taxable income
+ * - CPP cash reduces net (shown separately). `totalTaxes` excludes CPP, but the displayed
+ *   effective tax rate is INCLUSIVE of CPP (both employer + employee).
+ * - Corporate tax is auto-calculated for BC CCPC (2025): 11% up to $500k SBD, 27% above.
+ * - 2025 Fed + BC brackets, BPA credits (fed + BC)
+ * - Binary search solver to back into Gross Salary for a target Personal Cash Needed
  */
 
 // =========================
 // 2025 CONSTANTS (Canada, BC)
 // =========================
+
+// CPP ceilings (2025)
 const CPP_YMPE = 71_300;   // Tier 1 ceiling (2025)
-const CPP_YAMPE = 76_400;  // Tier 2 ceiling (2025)
-const CPP_RATE_T1 = 0.0595; // 5.95% per side (unchanged)
-const CPP_RATE_T2 = 0.04;   // 4.00% per side in 2025  ← was 0.02
+const CPP_YAMPE = 81_200;  // Tier 2 ceiling (2025)
+
+// CPP per-side rates (employee/employer)
+const CPP_T1_BASE_RATE = 0.0495; // 4.95% base (non-refundable credit on EE side)
+const CPP_T1_ENH_RATE  = 0.0100; // 1.00% first-additional (deductible)
+const CPP_T2_RATE      = 0.0400; // 4.00% CPP2 (deductible)
 const CPP_BASIC_EXEMPTION = 3_500;
 
 // Federal brackets (2025)
@@ -56,20 +58,10 @@ const FED_BPA_RATE = 0.15;
 const BC_BPA = 12_580;
 const BC_BPA_RATE = 0.0506;
 
-function applyBasicCredits(fedGross: number, bcGross: number) {
-  const fedCredit = FED_BPA * FED_BPA_RATE;
-  const bcCredit  = BC_BPA  * BC_BPA_RATE;
-  return {
-    fedNet: Math.max(0, fedGross - fedCredit),
-    bcNet:  Math.max(0, bcGross  - bcCredit),
-    fedCredit,
-    bcCredit,
-  };
-}
-
 // =========================
 // HELPERS
 // =========================
+
 function progressiveTax(taxable: number, brackets: Array<[number, number]>): number {
   let tax = 0, prev = 0;
   for (const [cap, rate] of brackets) {
@@ -82,49 +74,86 @@ function progressiveTax(taxable: number, brackets: Array<[number, number]>): num
   return tax;
 }
 
-function calcCPPEmployee(gross: number): number {
+/** Combine non-refundable credits and apply once (avoids order effects). */
+function applyCredits(grossTax: number, credits: number) {
+  return Math.max(0, grossTax - Math.max(0, credits));
+}
+
+/** Split CPP bases for a given gross salary */
+function splitCPPBases(gross: number) {
   const s = Math.max(0, gross);
   const t1Base = Math.max(0, Math.min(s, CPP_YMPE) - CPP_BASIC_EXEMPTION);
   const t2Base = Math.max(0, Math.min(s, CPP_YAMPE) - CPP_YMPE);
-  return t1Base * CPP_RATE_T1 + t2Base * CPP_RATE_T2;
+  return { t1Base, t2Base };
 }
 
-function calcCPPEmployer(gross: number): number {
-  // symmetric to employee in 2025
-  return calcCPPEmployee(gross);
+/** Compute CPP parts (employee & employer), and CRA tax-treatment buckets */
+function cppForEmployeeSalary(gross: number) {
+  const { t1Base, t2Base } = splitCPPBases(gross);
+
+  // Employee contributions (cash)
+  const ee_t1_base = t1Base * CPP_T1_BASE_RATE; // creditable (base)
+  const ee_t1_enh  = t1Base * CPP_T1_ENH_RATE;  // deductible
+  const ee_t2      = t2Base * CPP_T2_RATE;      // deductible
+  const ee_total   = ee_t1_base + ee_t1_enh + ee_t2;
+
+  // Employer contributions (cash)
+  const er_t1_base = t1Base * CPP_T1_BASE_RATE; // deductible corp
+  const er_t1_enh  = t1Base * CPP_T1_ENH_RATE;  // deductible corp
+  const er_t2      = t2Base * CPP_T2_RATE;      // deductible corp
+  const er_total   = er_t1_base + er_t1_enh + er_t2;
+
+  // CRA tax treatment
+  const personalDeduction = ee_t1_enh + ee_t2; // reduces personal taxable income
+  const corporateDeduction = er_t1_base + er_t1_enh + er_t2; // reduces corp taxable income
+  const fedCreditAmount = ee_t1_base * FED_BPA_RATE; // 15% credit on EE base
+  const bcCreditAmount  = ee_t1_base * BC_BPA_RATE;  // 5.06% credit on EE base
+
+  return {
+    // cash
+    employeePaid: ee_total,
+    employerPaid: er_total,
+    // deductions & credits
+    personalDeduction,
+    corporateDeduction,
+    extraFedCredit: fedCreditAmount,
+    extraBcCredit: bcCreditAmount,
+    // parts if needed
+    parts: { ee_t1_base, ee_t1_enh, ee_t2, er_t1_base, er_t1_enh, er_t2, t1Base, t2Base },
+  };
 }
 
-function calcFederalTax_2025(taxableIncome: number): number {
-  return progressiveTax(taxableIncome, FED_BRACKETS_2025);
-}
-
-function calcProvincialTax_BC_2025(taxableIncome: number): number {
-  return progressiveTax(taxableIncome, BC_BRACKETS_2025);
-}
-
-// Net-of-tax-and-CPP for a given gross salary
+/** Net-of-tax-and-CPP for a given gross salary (with CRA-correct CPP handling) */
 function netFromGross(grossSalary: number) {
-  // In this simplified model, taxableIncome = grossSalary (CPP excluded from “taxes” bucket)
-  const taxableIncome = Math.max(0, grossSalary);
+  // CPP buckets/credits
+  const cpp = cppForEmployeeSalary(grossSalary);
 
-  // Gross income tax (pre-credits)
-  const fedGross = calcFederalTax_2025(taxableIncome);
-  const bcGross  = calcProvincialTax_BC_2025(taxableIncome);
+  // Personal taxable income is reduced by deductible CPP pieces (EE enhanced + EE CPP2)
+  const taxableIncome = Math.max(0, grossSalary - cpp.personalDeduction);
 
-  // Apply Basic Personal Amount credits
-  const { fedNet, bcNet } = applyBasicCredits(fedGross, bcGross);
+  // Gross income tax (before credits)
+  const fedGross = progressiveTax(taxableIncome, FED_BRACKETS_2025);
+  const bcGross  = progressiveTax(taxableIncome, BC_BRACKETS_2025);
 
-  const personalTaxes = fedNet + bcNet;                // income tax NET of BPA
-  const personalCPP   = calcCPPEmployee(grossSalary);  // reduces take-home, not counted as “tax”
+  // Non-refundable credits: BPA + CPP base EE credit
+  const fedCredits = FED_BPA * FED_BPA_RATE + cpp.extraFedCredit;
+  const bcCredits  = BC_BPA  * BC_BPA_RATE  + cpp.extraBcCredit;
+
+  const fedNet = applyCredits(fedGross, fedCredits);
+  const bcNet  = applyCredits(bcGross,  bcCredits);
+
+  const personalTaxes = fedNet + bcNet;                 // income tax (ex-CPP)
+  const personalCPP   = cpp.employeePaid;               // EE CPP cash reduces take-home
   const net = grossSalary - personalTaxes - personalCPP;
 
   return {
     net,
     personalTaxes,
     personalCPP,
-    federalTax: fedNet,          // expose NET values (after BPA)
-    provincialTax: bcNet,        // expose NET values (after BPA)
+    federalTax: fedNet,          // expose NET (after BPA + CPP credit)
+    provincialTax: bcNet,        // expose NET (after BPA + CPP credit)
     taxableIncome,
+    cpp,                         // return cpp buckets for corp side
   };
 }
 
@@ -148,38 +177,20 @@ function solveGrossForNet(
   let lastMid = high;
   for (let iter = 0; iter < maxIter; iter++) {
     const mid = (low + high) / 2;
-    const { net, personalTaxes, personalCPP, federalTax, provincialTax, taxableIncome } = netFromGross(mid);
+    const solved = netFromGross(mid);
 
-    if (Math.abs(net - personalCashNeeded) <= tolerance || Math.abs(mid - lastMid) <= tolerance) {
-      return {
-        grossSalary: mid,
-        personalTaxes,
-        personalCPP,
-        federalTax,
-        provincialTax,
-        taxableIncome,
-        achievedNet: net,
-        iterations: iter,
-      };
+    if (Math.abs(solved.net - personalCashNeeded) <= tolerance || Math.abs(mid - lastMid) <= tolerance) {
+      return { grossSalary: mid, ...solved, iterations: iter };
     }
 
-    if (net < personalCashNeeded) low = mid;
+    if (solved.net < personalCashNeeded) low = mid;
     else high = mid;
 
     lastMid = mid;
   }
 
-  const { net, personalTaxes, personalCPP, federalTax, provincialTax, taxableIncome } = netFromGross(lastMid);
-  return {
-    grossSalary: lastMid,
-    personalTaxes,
-    personalCPP,
-    federalTax,
-    provincialTax,
-    taxableIncome,
-    achievedNet: net,
-    iterations: maxIter,
-  };
+  const solved = netFromGross(lastMid);
+  return { grossSalary: lastMid, ...solved, iterations: maxIter };
 }
 
 // =========================
@@ -188,34 +199,41 @@ function solveGrossForNet(
 export function calculateIncorporatedSalary(params: {
   businessIncome: number;      // corp revenue before salary/CPP/tax
   personalCashNeeded: number;  // target net to individual
-  corpTaxRatePct: number;      // e.g., 11 (SBD) or 27
   otherExpenses?: number;      // optional corp expenses
 }) {
-  const { businessIncome, personalCashNeeded, corpTaxRatePct, otherExpenses = 0 } = params;
-  const corpRate = Math.max(0, corpTaxRatePct) / 100;
+  const { businessIncome, personalCashNeeded, otherExpenses = 0 } = params;
 
   // 1) Solve gross salary for target net
   const solved = solveGrossForNet(personalCashNeeded);
-  const grossSalary = solved.grossSalary;
-  const personalTaxes = solved.personalTaxes;
-  const personalCPP = solved.personalCPP;
-  const federalTax = solved.federalTax;
-  const provincialTax = solved.provincialTax;
-  const taxableIncome = solved.taxableIncome;
+  const grossSalary    = solved.grossSalary;
+  const personalTaxes  = solved.personalTaxes;
+  const personalCPP    = solved.personalCPP;
+  const federalTax     = solved.federalTax;
+  const provincialTax  = solved.provincialTax;
+  const taxableIncome  = solved.taxableIncome;
 
-  // 2) Corporate side
-  const corporateCPP = calcCPPEmployer(grossSalary); // employer share only
-  const corpProfitBeforeTax = Math.max(0, businessIncome - grossSalary - corporateCPP - (otherExpenses || 0));
-  const corporateTaxes = corpProfitBeforeTax * corpRate;
-  const corporateCash = corpProfitBeforeTax - corporateTaxes;
+  // 2) Corporate side (employer CPP is deductible + cash outflow)
+  const corporateCPP = solved.cpp?.employerPaid ?? 0;
+
+  const corpProfitBeforeTax =
+    Math.max(0, businessIncome - grossSalary - corporateCPP - (otherExpenses || 0));
+
+  // Auto-calc BC + Federal corporate taxes (2025 CCPC)
+  const { corporateTaxes } = computeCorporateTaxesBC(corpProfitBeforeTax);
+  const corporateCash  = corpProfitBeforeTax - corporateTaxes;
 
   // 3) Derived
-  const personalCash = grossSalary - personalTaxes - personalCPP; // ≈ personalCashNeeded
-  const totalTaxes = personalTaxes + corporateTaxes;              // CPP excluded
-  const totalCPP = personalCPP + corporateCPP;
-  const totalCash = personalCash + corporateCash;
-  const totalTaxRate = businessIncome > 0 ? totalTaxes / businessIncome : 0;
-  const rrspRoom = Math.min(grossSalary * RRSP_PCT, RRSP_MAX_2025);
+  const personalCash  = grossSalary - personalTaxes - personalCPP; // ≈ personalCashNeeded
+  const totalTaxes    = personalTaxes + corporateTaxes;            // (excludes CPP)
+  const totalCPP      = personalCPP + corporateCPP;
+  const totalCash     = personalCash + corporateCash;
+
+  // Effective tax rate INCLUDES CPP (EE+ER)
+  const totalTaxRate  = businessIncome > 0
+    ? (totalTaxes + totalCPP) / businessIncome
+    : 0;
+
+  const rrspRoom      = Math.min(grossSalary * RRSP_PCT, RRSP_MAX_2025);
 
   return {
     scenario: "INC_SALARY" as const,
@@ -248,18 +266,19 @@ export function calculateIncorporatedSalary(params: {
 // UI COMPONENT
 // =========================
 const fmt = (n: number) =>
-  Number.isFinite(n) ? n.toLocaleString(undefined, { style: "currency", currency: "CAD", maximumFractionDigits: 2 }) : "—";
+  Number.isFinite(n)
+    ? n.toLocaleString(undefined, { style: "currency", currency: "CAD", maximumFractionDigits: 2 })
+    : "—";
 const pct = (n: number) => (Number.isFinite(n) ? (n * 100).toFixed(2) + "%" : "—");
 
 export default function SalaryScenario() {
   const [businessIncome, setBusinessIncome] = useState(200_000);
   const [personalCashNeeded, setPersonalCashNeeded] = useState(100_000);
-  const [corpTaxRatePct, setCorpTaxRatePct] = useState(11);
   const [otherExpenses, setOtherExpenses] = useState(0);
 
   const res = useMemo(
-    () => calculateIncorporatedSalary({ businessIncome, personalCashNeeded, corpTaxRatePct, otherExpenses }),
-    [businessIncome, personalCashNeeded, corpTaxRatePct, otherExpenses]
+    () => calculateIncorporatedSalary({ businessIncome, personalCashNeeded, otherExpenses }),
+    [businessIncome, personalCashNeeded, otherExpenses]
   );
 
   return (
@@ -286,15 +305,6 @@ export default function SalaryScenario() {
           />
         </label>
         <label className="text-sm">
-          <span className="block text-slate-400 mb-1">Corporate Tax Rate (%)</span>
-          <input
-            type="number"
-            className="w-full rounded-xl bg-slate-900 border border-white/10 px-3 py-2"
-            value={corpTaxRatePct}
-            onChange={(e) => setCorpTaxRatePct(parseFloat(e.target.value || "0"))}
-          />
-        </label>
-        <label className="text-sm">
           <span className="block text-slate-400 mb-1">Other Corporate Expenses (optional)</span>
           <input
             type="number"
@@ -306,24 +316,26 @@ export default function SalaryScenario() {
       </div>
 
       <div className="mt-3 text-xs text-slate-400 border border-white/10 rounded-xl p-3 bg-slate-900/50">
-        <strong>Notes:</strong> 2025 Fed + BC brackets. CPP Tier 1 & 2 included (EE/ER). CPP is <em>excluded</em> from “taxes”
-        here but reduces take-home. <strong>Basic Personal Amount credits applied (federal + BC).</strong> Other credits/surtaxes ignored.
+        <strong>Notes:</strong> 2025 Fed + BC brackets. CPP Tier 1 & 2 handled per CRA:
+        EE base credited at lowest rates; EE enhanced + CPP2 deducted from personal income;
+        ER base/enhanced/CPP2 deducted corporately. Corporate tax auto-calculated for a BC CCPC
+        (11% up to $500k SBD, 27% above). <strong>Effective tax rate shown includes CPP (EE+ER).</strong>
+        BPA credits applied (federal + BC). Other credits/surtaxes ignored.
       </div>
 
       <div className="space-y-2 mt-4">
         <Row label="Gross Salary needed" value={fmt(res.grossSalary)} big />
-        <Row label="Personal taxes (income tax only, net of BPA)" value={fmt(res.personalTaxes)} muted />
-        <Row label="– Federal portion (net of BPA)" value={fmt(res.federalTax)} muted />
-        <Row label="– Provincial portion (net of BPA)" value={fmt(res.provincialTax)} muted />
+        <Row label="Personal taxes (income tax only, net of credits)" value={fmt(res.personalTaxes)} muted />
+        <Row label="– Federal portion (net of credits)" value={fmt(res.federalTax)} muted />
+        <Row label="– Provincial portion (net of credits)" value={fmt(res.provincialTax)} muted />
         <Row label="Personal CPP (employee)" value={fmt(res.personalCPP)} muted />
         <Row label="Net to you" value={fmt(res.personalCash)} />
         <Row label="Employer CPP (corporate)" value={fmt(res.corporateCPP)} />
-        <Row label="Corporate profit (before corp tax)" value={fmt(res.totalCash + res.corporateTaxes)} />{/* equals corpCash + corpTax */}
+        <Row label="Corporate profit (before corp tax)" value={fmt(res.totalCash + res.corporateTaxes)} />
         <Row label="Corporate taxes" value={fmt(res.corporateTaxes)} />
         <Row label="Corporate cash (retained)" value={fmt(res.corporateCash)} />
-        <Row label="Total taxes (excludes CPP)" value={fmt(res.totalTaxes)} muted />
-        <Row label="Total CPP (employer + employee)" value={fmt(res.totalCPP)} muted />
-        <Row label="Effective tax rate (ex-CPP)" value={pct(res.totalTaxRate)} pill />
+        <Row label="Total taxes (incl. CPP)" value={fmt(res.totalTaxes + res.totalCPP)} muted />
+        <Row label="Effective tax rate (incl. CPP)" value={pct(res.totalTaxRate)} pill />
         <Row label="Total cash (personal + corporate)" value={fmt(res.totalCash)} pill />
         <Row label="RRSP Room (18% of gross, capped)" value={fmt(res.rrspRoom)} />
       </div>
@@ -351,7 +363,7 @@ function Row({
         className={
           (pill ? "px-2 py-0.5 rounded-full bg-white/5 border border-white/10 " : "") +
           (big ? "text-lg font-extrabold " : "") +
-          "tabular-nums font-mono"
+          " tabular-nums font-mono"
         }
       >
         {value}

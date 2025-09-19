@@ -30,7 +30,7 @@ export default function NotIncorporatedScenario() {
         <Row label="Personal taxes" value={fmt(res.personalTaxes)} />
         <Row label="CPP (employee/self-employed)" value={fmt(res.personalCPP)} />
         <Row label="Net to you" value={fmt(res.personalCash)} big />
-        <Row label="Effective tax rate (ex-CPP)" value={pct(res.totalTaxRate)} pill />
+        <Row label="Effective tax rate (incl. CPP)" value={pct(res.totalTaxRate)} pill />
         <Row label="RRSP room" value={fmt(res.rrspRoom)} />
       </div>
     </div>

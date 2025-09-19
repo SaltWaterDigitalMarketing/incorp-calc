@@ -1,4 +1,5 @@
-import { BC_BRACKETS, FED_BRACKETS, CPP, RRSP } from "./taxTables_2025_BC";
+import { BC_BRACKETS, FED_BRACKETS, RRSP } from "./taxTables_2025_BC";
+import { cppTaxTreatmentForUnincorporated } from "./cppHelpers";
 import type { CalcInput, ScenarioOutput } from "./types";
 
 /** ---------- BPA constants (2025) ---------- */
@@ -7,9 +8,14 @@ const FED_BPA_RATE = 0.15;     // credit @ lowest federal rate
 const BC_BPA  = 12_580;
 const BC_BPA_RATE = 0.0506;    // credit @ lowest BC rate
 
-function applyBasicCredits(fedGross: number, bcGross: number) {
-  const fedCredit = FED_BPA * FED_BPA_RATE;
-  const bcCredit  = BC_BPA  * BC_BPA_RATE;
+function applyBasicCredits(
+  fedGross: number,
+  bcGross: number,
+  extraFedCredit = 0,
+  extraBcCredit = 0
+) {
+  const fedCredit = FED_BPA * FED_BPA_RATE + extraFedCredit;
+  const bcCredit  = BC_BPA  * BC_BPA_RATE + extraBcCredit;
   return {
     fedNet: Math.max(0, fedGross - fedCredit),
     bcNet:  Math.max(0, bcGross  - bcCredit),
@@ -31,39 +37,41 @@ function progressiveTax(taxable: number, brackets: Array<[number, number]>): num
   return tax;
 }
 
-function calcCPP(gross: number): number {
-  // Tier 1
-  const base1 = Math.min(Math.max(gross, 0), CPP.YMPE) - CPP.BASIC_EXEMPT;
-  const cpp1  = Math.max(0, Math.min(base1, CPP.MPE)) * CPP.RATE_T1;
-  // Tier 2 (over YMPE up to YAMPE)
-  const base2 = Math.max(0, Math.min(gross, CPP.YAMPE) - CPP.YMPE);
-  const cpp2  = base2 * CPP.RATE_T2;
-  return cpp1 + cpp2;
-}
-
 /** ---------- main ---------- */
 export function calculateUnincorporated(input: CalcInput): ScenarioOutput {
-  const grossSalary = input.businessIncome; // unchanged: using businessIncome as the personal gross here
+  const grossSalary = input.businessIncome; // using businessIncome as personal gross here
 
-  // CPP kept separate from "taxes" in this model
-  const totalCPP    = calcCPP(grossSalary);
-  const corporateCPP = 0;            // uninc: no employer CPP
-  const personalCPP  = totalCPP;     // all CPP borne personally
+  // === CPP with CRA treatment (self-employed pays both sides) ===
+  const cpp = cppTaxTreatmentForUnincorporated(grossSalary);
 
-  // Income tax base (CPP excluded in this simplified model)
-  const taxableIncome = Math.max(0, grossSalary);
+  // Personal taxable income is reduced by CPP deductible pieces (enhanced + employer-equivalent)
+  const taxableIncome = Math.max(0, grossSalary - cpp.personalDeduction);
 
-  // Gross (pre-credit) taxes
+  // Gross (pre-credit) taxes on reduced taxable income
   const federalTaxGross    = progressiveTax(taxableIncome, FED_BRACKETS);
   const provincialTaxGross = progressiveTax(taxableIncome, BC_BRACKETS);
 
-  // Apply BPA credits (federal + BC)
-  const { fedNet, bcNet } = applyBasicCredits(federalTaxGross, provincialTaxGross);
+  // CPP base employee amount gives non-refundable credits at lowest rates
+  const extraFedCredit = cpp.credits.baseEE * FED_BPA_RATE;   // 15%
+  const extraBcCredit  = cpp.credits.baseEE * BC_BPA_RATE;    // 5.06%
 
-  // Net taxes after BPA
+  // Apply BPA + CPP credits
+  const { fedNet, bcNet } = applyBasicCredits(
+    federalTaxGross,
+    provincialTaxGross,
+    extraFedCredit,
+    extraBcCredit
+  );
+
+  // Net taxes after credits (CPP cash kept separate)
   const federalTax    = fedNet;
   const provincialTax = bcNet;
-  const personalTaxes = federalTax + provincialTax;   // still excludes CPP
+  const personalTaxes = federalTax + provincialTax;
+
+  // CPP cash outflow is entirely personal for unincorporated
+  const totalCPP     = cpp.personalPaid;
+  const personalCPP  = totalCPP;
+  const corporateCPP = 0;
 
   // Corporate side (none for unincorporated)
   const corporateTaxes = 0;
@@ -74,8 +82,11 @@ export function calculateUnincorporated(input: CalcInput): ScenarioOutput {
   const totalCash    = personalCash;
 
   // Totals/ratios
-  const totalTaxes   = personalTaxes + corporateTaxes; // CPP excluded
-  const totalTaxRate = grossSalary > 0 ? totalTaxes / grossSalary : 0;
+  const totalTaxes   = personalTaxes + corporateTaxes; // (excludes CPP)
+  // ✅ Effective tax rate now INCLUSIVE of CPP
+  const totalTaxRate = grossSalary > 0 ? (totalTaxes + totalCPP) / grossSalary : 0;
+
+  // RRSP room (earned income × 18%, capped)
   const rrspRoom     = Math.min(RRSP.MAX_2025, grossSalary * RRSP.RATE);
 
   return {
@@ -99,7 +110,7 @@ export function calculateUnincorporated(input: CalcInput): ScenarioOutput {
     totalTaxRate,
     rrspRoom,
 
-    // Expose NET (after BPA) components for transparency
+    // Expose NET (after credits) components for transparency
     federalTax,
     provincialTax,
     taxableIncome,
