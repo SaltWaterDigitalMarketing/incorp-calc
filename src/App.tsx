@@ -1,3 +1,4 @@
+// src/App.tsx
 import { useMemo, useState } from "react";
 import { calculateUnincorporated } from "./engine/calcUnincorporated";
 import type { Output } from "./engine/types";
@@ -5,7 +6,6 @@ import "./styles.css";
 
 import { Pie } from "react-chartjs-2";
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
-
 ChartJS.register(ArcElement, Tooltip, Legend);
 
 function currency(n: number) {
@@ -18,52 +18,65 @@ function pct(n: number) {
 export default function App() {
   const [income, setIncome] = useState<number>(150_000);
 
+  // ✅ Step 1 change: include personalCashNeeded (0 for now)
   const result: Output = useMemo(
-    () => calculateUnincorporated({ businessIncome: income, province: "BC", taxYear: 2025 }),
+    () =>
+      calculateUnincorporated({
+        businessIncome: income,
+        personalCashNeeded: 0, // we'll wire a real input in the next step
+        province: "BC",
+        taxYear: 2025,
+      }),
     [income]
   );
 
   // Pie must sum to 100% of grossSalary => cash = gross - totalTaxes - totalCPP
   const pieCash = Math.max(0, result.grossSalary - result.totalTaxes - result.totalCPP);
-  const data = {
+  const pieData = {
     labels: ["Total Cash", "Total Taxes", "Total CPP"],
-    datasets: [
-      {
-        data: [pieCash, result.totalTaxes, result.totalCPP],
-      },
-    ],
+    datasets: [{ data: [pieCash, result.totalTaxes, result.totalCPP] }],
   };
 
   return (
     <div className="container">
-      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12}}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h1>Unincorporated Tax Calculator (BC · 2025)</h1>
         <span className="badge">Tax tables v2025.1</span>
       </div>
 
       <div className="grid">
+        {/* Inputs */}
         <div className="card">
-          <div style={{display:"grid", gap:12}}>
+          <div style={{ display: "grid", gap: 12 }}>
             <div>
               <label>Business Income</label>
-              <input type="number" min={0} step={100}
+              <input
+                type="number"
+                min={0}
+                step={100}
                 value={income}
-                onChange={(e)=> setIncome(Number(e.target.value || 0))}
-                inputMode="numeric" />
+                onChange={(e) => setIncome(Number(e.target.value || 0))}
+                inputMode="numeric"
+              />
               <div className="hint">Enter gross self-employment income before taxes/CPP.</div>
             </div>
           </div>
         </div>
 
+        {/* Pie chart */}
         <div className="card">
-          <Pie data={data} />
+          <Pie data={pieData} />
         </div>
       </div>
 
-      <div className="card" style={{marginTop:16}}>
+      {/* Outputs table */}
+      <div className="card" style={{ marginTop: 16 }}>
         <table className="table">
           <thead>
-            <tr><th>Field</th><th>Value</th></tr>
+            <tr>
+              <th>Field</th>
+              <th>Value</th>
+            </tr>
           </thead>
           <tbody>
             <tr><td>grossSalary</td><td>{currency(result.grossSalary)}</td></tr>
@@ -82,7 +95,8 @@ export default function App() {
             <tr><td>bcTax</td><td>{currency(result.provincialTax)}</td></tr>
           </tbody>
         </table>
-        <div className="hint" style={{marginTop:8}}>
+
+        <div className="hint" style={{ marginTop: 8 }}>
           Assumptions: BC 2025 brackets; no credits; CPP split 50/50 with deductible employer half; RRSP room = min(18% × gross, $32,490).
         </div>
       </div>
