@@ -1,103 +1,32 @@
 // src/App.tsx
-import { useMemo, useState } from "react";
-import { calculateUnincorporated } from "./engine/calcUnincorporated";
-import type { Output } from "./engine/types";
-import "./styles.css";
-
-import { Pie } from "react-chartjs-2";
-import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
-ChartJS.register(ArcElement, Tooltip, Legend);
-
-function currency(n: number) {
-  return n.toLocaleString("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 });
-}
-function pct(n: number) {
-  return (n * 100).toFixed(1) + "%";
-}
+import NotIncorporatedScenario from "./components/NotIncorporatedScenario";
+import SalaryScenario from "./components/SalaryScenario";
+import DividendScenario from "./components/DividendScenario";
 
 export default function App() {
-  const [income, setIncome] = useState<number>(150_000);
-
-  // ✅ Step 1 change: include personalCashNeeded (0 for now)
-  const result: Output = useMemo(
-    () =>
-      calculateUnincorporated({
-        businessIncome: income,
-        personalCashNeeded: 0, // we'll wire a real input in the next step
-        province: "BC",
-        taxYear: 2025,
-      }),
-    [income]
-  );
-
-  // Pie must sum to 100% of grossSalary => cash = gross - totalTaxes - totalCPP
-  const pieCash = Math.max(0, result.grossSalary - result.totalTaxes - result.totalCPP);
-  const pieData = {
-    labels: ["Total Cash", "Total Taxes", "Total CPP"],
-    datasets: [{ data: [pieCash, result.totalTaxes, result.totalCPP] }],
-  };
-
   return (
-    <div className="container">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <h1>Unincorporated Tax Calculator (BC · 2025)</h1>
-        <span className="badge">Tax tables v2025.1</span>
-      </div>
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="mx-auto max-w-7xl p-6">
+        <h1 className="text-2xl font-bold">Tax Savings Calculator</h1>
+        <p className="text-slate-400 text-sm">
+          Compare all three structures. CPP is shown separately (excluded from “taxes”).
+        </p>
 
-      <div className="grid">
-        {/* Inputs */}
-        <div className="card">
-          <div style={{ display: "grid", gap: 12 }}>
-            <div>
-              <label>Business Income</label>
-              <input
-                type="number"
-                min={0}
-                step={100}
-                value={income}
-                onChange={(e) => setIncome(Number(e.target.value || 0))}
-                inputMode="numeric"
-              />
-              <div className="hint">Enter gross self-employment income before taxes/CPP.</div>
-            </div>
-          </div>
-        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
+          <section className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+            <h2 className="font-semibold mb-3">Not Incorporated</h2>
+            <NotIncorporatedScenario />
+          </section>
 
-        {/* Pie chart */}
-        <div className="card">
-          <Pie data={pieData} />
-        </div>
-      </div>
+          <section className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+            <h2 className="font-semibold mb-3">Incorporated — Salary</h2>
+            <SalaryScenario />
+          </section>
 
-      {/* Outputs table */}
-      <div className="card" style={{ marginTop: 16 }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Field</th>
-              <th>Value</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td>grossSalary</td><td>{currency(result.grossSalary)}</td></tr>
-            <tr><td>personalTaxes</td><td>{currency(result.personalTaxes)}</td></tr>
-            <tr><td>personalCPP</td><td>{currency(result.personalCPP)}</td></tr>
-            <tr><td>corporateTaxes</td><td>{currency(result.corporateTaxes)}</td></tr>
-            <tr><td>corporateCPP</td><td>{currency(result.corporateCPP)}</td></tr>
-            <tr><td>totalTaxes</td><td>{currency(result.totalTaxes)}</td></tr>
-            <tr><td>totalCPP</td><td>{currency(result.totalCPP)}</td></tr>
-            <tr><td>personalCash</td><td>{currency(result.personalCash)}</td></tr>
-            <tr><td>totalCash</td><td>{currency(result.totalCash)}</td></tr>
-            <tr><td>totalTaxRate</td><td>{pct(result.totalTaxRate)}</td></tr>
-            <tr><td>rrspRoom</td><td>{currency(result.rrspRoom)}</td></tr>
-            <tr><td>taxableIncome (gross − ½CPP)</td><td>{currency(result.taxableIncome)}</td></tr>
-            <tr><td>federalTax</td><td>{currency(result.federalTax)}</td></tr>
-            <tr><td>bcTax</td><td>{currency(result.provincialTax)}</td></tr>
-          </tbody>
-        </table>
-
-        <div className="hint" style={{ marginTop: 8 }}>
-          Assumptions: BC 2025 brackets; no credits; CPP split 50/50 with deductible employer half; RRSP room = min(18% × gross, $32,490).
+          <section className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+            <h2 className="font-semibold mb-3">Incorporated — Dividends</h2>
+            <DividendScenario />
+          </section>
         </div>
       </div>
     </div>

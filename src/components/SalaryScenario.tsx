@@ -5,7 +5,8 @@ import React, { useMemo, useState } from "react";
  * Incorporated with Salary — BC 2025
  * - CPP excluded from taxes (but reduces net; shown separately)
  * - Supports retained earnings (BusinessIncome can exceed amounts needed to fund personal cash goal)
- * - 2025 Federal + BC tax brackets; ignores credits/surtaxes
+ * - 2025 Federal + BC tax brackets
+ * - Applies Basic Personal Amount (BPA) credits (federal + BC)
  * - Binary search solver to back into Gross Salary for a target Personal Cash Needed
  *
  * Returns keys aligned with your ScenarioOutput from calculateUnincorporated:
@@ -51,12 +52,28 @@ const BC_BRACKETS_2025: Array<[number, number]> = [
 const RRSP_MAX_2025 = 32_490;
 const RRSP_PCT = 0.18;
 
+// ---- Basic Personal Amounts (2025) ----
+const FED_BPA = 16_103;
+const FED_BPA_RATE = 0.15;
+const BC_BPA = 12_580;
+const BC_BPA_RATE = 0.0506;
+
+function applyBasicCredits(fedGross: number, bcGross: number) {
+  const fedCredit = FED_BPA * FED_BPA_RATE;
+  const bcCredit  = BC_BPA  * BC_BPA_RATE;
+  return {
+    fedNet: Math.max(0, fedGross - fedCredit),
+    bcNet:  Math.max(0, bcGross  - bcCredit),
+    fedCredit,
+    bcCredit,
+  };
+}
+
 // =========================
 // HELPERS
 // =========================
 function progressiveTax(taxable: number, brackets: Array<[number, number]>): number {
-  let tax = 0,
-    prev = 0;
+  let tax = 0, prev = 0;
   for (const [cap, rate] of brackets) {
     const amt = Math.max(0, Math.min(taxable, cap) - prev);
     if (amt <= 0) break;
@@ -91,14 +108,26 @@ function calcProvincialTax_BC_2025(taxableIncome: number): number {
 function netFromGross(grossSalary: number) {
   // In this simplified model, taxableIncome = grossSalary (CPP excluded from “taxes” bucket)
   const taxableIncome = Math.max(0, grossSalary);
-  const federalTax = calcFederalTax_2025(taxableIncome);
-  const provincialTax = calcProvincialTax_BC_2025(taxableIncome);
-  const personalTaxes = federalTax + provincialTax;
 
-  const personalCPP = calcCPPEmployee(grossSalary); // reduces take-home, but *not* counted as “tax”
+  // Gross income tax (pre-credits)
+  const fedGross = calcFederalTax_2025(taxableIncome);
+  const bcGross  = calcProvincialTax_BC_2025(taxableIncome);
+
+  // Apply Basic Personal Amount credits
+  const { fedNet, bcNet } = applyBasicCredits(fedGross, bcGross);
+
+  const personalTaxes = fedNet + bcNet;                // income tax NET of BPA
+  const personalCPP   = calcCPPEmployee(grossSalary);  // reduces take-home, not counted as “tax”
   const net = grossSalary - personalTaxes - personalCPP;
 
-  return { net, personalTaxes, personalCPP, federalTax, provincialTax, taxableIncome };
+  return {
+    net,
+    personalTaxes,
+    personalCPP,
+    federalTax: fedNet,          // expose NET values (after BPA)
+    provincialTax: bcNet,        // expose NET values (after BPA)
+    taxableIncome,
+  };
 }
 
 // Solve gross salary for target net (binary search)
@@ -280,14 +309,14 @@ export default function SalaryScenario() {
 
       <div className="mt-3 text-xs text-slate-400 border border-white/10 rounded-xl p-3 bg-slate-900/50">
         <strong>Notes:</strong> 2025 Fed + BC brackets. CPP Tier 1 & 2 included (EE/ER). CPP is <em>excluded</em> from “taxes”
-        here but reduces take-home. Income tax credits/surtaxes ignored for simplicity.
+        here but reduces take-home. <strong>Basic Personal Amount credits applied (federal + BC).</strong> Other credits/surtaxes ignored.
       </div>
 
       <div className="space-y-2 mt-4">
         <Row label="Gross Salary needed" value={fmt(res.grossSalary)} big />
-        <Row label="Personal taxes (income tax only)" value={fmt(res.personalTaxes)} muted />
-        <Row label="– Federal portion" value={fmt(res.federalTax)} muted />
-        <Row label="– Provincial portion" value={fmt(res.provincialTax)} muted />
+        <Row label="Personal taxes (income tax only, net of BPA)" value={fmt(res.personalTaxes)} muted />
+        <Row label="– Federal portion (net of BPA)" value={fmt(res.federalTax)} muted />
+        <Row label="– Provincial portion (net of BPA)" value={fmt(res.provincialTax)} muted />
         <Row label="Personal CPP (employee)" value={fmt(res.personalCPP)} muted />
         <Row label="Net to you" value={fmt(res.personalCash)} />
         <Row label="Employer CPP (corporate)" value={fmt(res.corporateCPP)} />
