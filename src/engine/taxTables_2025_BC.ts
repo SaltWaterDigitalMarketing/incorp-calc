@@ -1,23 +1,25 @@
-// CPP (2025 per your spec)
+// =========================
+// CPP (2025 per CRA)
+// =========================
 export const CPP = {
   BASIC_EXEMPT: 3_500,
 
   // 2025 ceilings
-  YMPE: 71_300,     // Tier 1 ceiling
-  YAMPE: 76_400,    // Tier 2 ceiling
+  YMPE: 71_300,   // Tier 1 ceiling
+  YAMPE: 81_200,  // Tier 2 ceiling (CPP2 band upper)
 
-  // Derived (Tier 1 pensionable base)
-  MPE: 71_300 - 3_500, // = 67,800
-
-  // 2025 rates:
-  // NOTE: For unincorporated (self-employed) we need total (EE + ER).
-  // Tier 1 total = 5.95% + 5.95% = 11.90%
-  // Tier 2 total = 4.00% + 4.00% = 8.00%
-  RATE_T1: 0.119,  // 11.90% (combined)
-  RATE_T2: 0.08,   // 8.00% (combined)
+  // Per-side rates (employee & employer)
+  EE_T1_BASE_RATE: 0.0495, // 4.95% employee base (creditable)
+  ER_T1_BASE_RATE: 0.0495, // 4.95% employer base (deductible)
+  EE_T1_ENH_RATE:  0.0100, // 1.00% employee first-additional (deductible)
+  ER_T1_ENH_RATE:  0.0100, // 1.00% employer first-additional (deductible)
+  EE_T2_RATE: 0.0400,      // 4.00% employee CPP2 (deductible)
+  ER_T2_RATE: 0.0400,      // 4.00% employer CPP2 (deductible),
 } as const;
 
-// Federal brackets (taxable income)
+// =========================
+// Federal tax brackets (2025)
+// =========================
 export const FED_BRACKETS: Array<[number, number]> = [
   [55_867, 0.15],
   [111_733, 0.205],
@@ -26,7 +28,9 @@ export const FED_BRACKETS: Array<[number, number]> = [
   [Number.POSITIVE_INFINITY, 0.33],
 ];
 
-// BC brackets (taxable income)
+// =========================
+// BC tax brackets (2025)
+// =========================
 export const BC_BRACKETS: Array<[number, number]> = [
   [47_937, 0.0506],
   [95_875, 0.0770],
@@ -37,4 +41,10 @@ export const BC_BRACKETS: Array<[number, number]> = [
   [Number.POSITIVE_INFINITY, 0.2050],
 ];
 
-export const RRSP = { RATE: 0.18, MAX_2025: 32_490 } as const;
+// =========================
+// RRSP (2025)
+// =========================
+export const RRSP = {
+  RATE: 0.18,
+  MAX_2025: 32_490,
+} as const;
